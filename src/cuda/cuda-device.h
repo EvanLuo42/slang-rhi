@@ -30,6 +30,8 @@ public:
     Context m_ctx;
     std::string m_adapterName;
     RefPtr<CommandQueueImpl> m_queue;
+    RefPtr<CommandQueueImpl> m_computeQueue;
+    RefPtr<CommandQueueImpl> m_transferQueue;
     ClearEngine m_clearEngine;
     bool m_ownsContext = false;
     RefPtr<HeapImpl> m_deviceMemHeap;

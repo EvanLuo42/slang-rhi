@@ -51,6 +51,16 @@ DeviceImpl::~DeviceImpl()
         m_readbackHeap.release();
         m_clearEngine.release();
 
+        if (m_computeQueue)
+        {
+            m_computeQueue->shutdown();
+            m_computeQueue.setNull();
+        }
+        if (m_transferQueue)
+        {
+            m_transferQueue->shutdown();
+            m_transferQueue.setNull();
+        }
         if (m_queue)
         {
             m_queue->shutdown();
@@ -341,6 +351,16 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
     SLANG_RETURN_ON_FAIL(m_queue->init());
     m_queue->setInternalReferenceCount(1);
 
+    m_computeQueue = new CommandQueueImpl(this, QueueType::Compute);
+    SLANG_RETURN_ON_FAIL(m_computeQueue->init());
+    m_computeQueue->setInternalReferenceCount(1);
+    addFeature(Feature::ComputeQueue);
+
+    m_transferQueue = new CommandQueueImpl(this, QueueType::Transfer);
+    SLANG_RETURN_ON_FAIL(m_transferQueue->init());
+    m_transferQueue->setInternalReferenceCount(1);
+    addFeature(Feature::TransferQueue);
+
     // Create 2 heaps. On CUDA both Upload and ReadBack just use host memory,
     // so we only need one for DeviceLocal and one for Upload/ReadBack.
     ComPtr<IHeap> heapPtr;
@@ -371,9 +391,23 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
 
 void DeviceImpl::deferDelete(Resource* resource)
 {
-    SLANG_RHI_ASSERT(m_queue != nullptr);
-    m_queue->deferDelete(resource);
+    CommandQueueImpl* queues[] = {m_queue, m_computeQueue, m_transferQueue};
+    int count = 0;
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            ++count;
+    }
+    SLANG_RHI_ASSERT(count > 0);
+    DeferredResource* shared = new DeferredResource();
+    shared->resource = resource;
+    shared->remaining.store(count, std::memory_order_relaxed);
     resource->breakStrongReferenceToDevice();
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            queue->deferDelete(shared);
+    }
 }
 
 Result DeviceImpl::getNativeDeviceHandles(DeviceNativeHandles* outHandles)
@@ -472,12 +506,24 @@ void DeviceImpl::unmap(IBuffer* buffer)
 
 Result DeviceImpl::getQueue(QueueType type, ICommandQueue** outQueue)
 {
-    if (type != QueueType::Graphics)
+    switch (type)
     {
+    case QueueType::Graphics:
+        returnComPtr(outQueue, m_queue);
+        return SLANG_OK;
+    case QueueType::Compute:
+        if (!m_computeQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_computeQueue);
+        return SLANG_OK;
+    case QueueType::Transfer:
+        if (!m_transferQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_transferQueue);
+        return SLANG_OK;
+    default:
         return SLANG_E_INVALID_ARG;
     }
-    returnComPtr(outQueue, m_queue);
-    return SLANG_OK;
 }
 
 Result DeviceImpl::createSampler(const SamplerDesc& desc, ISampler** outSampler)
