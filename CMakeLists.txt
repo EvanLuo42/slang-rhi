@@ -1108,6 +1108,7 @@ if(SLANG_RHI_BUILD_TESTS AND NOT SLANG_RHI_BUILD_SHARED AND NOT EMSCRIPTEN)
         # tests/test-precompiled-module-cache.cpp
         tests/test-precompiled-module.cpp
         tests/test-push-constant.cpp
+        tests/test-queue.cpp
         tests/test-ray-tracing-clusters.cpp
         tests/test-ray-tracing-hitobject-intrinsics.cpp
         tests/test-ray-tracing-intrinsics.cpp

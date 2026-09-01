@@ -1131,7 +1131,14 @@ static void gpuTestTrampoline()
         reportGpuTestExecuted(deviceType);
         if (device)
         {
-            device->getQueue(QueueType::Graphics)->waitOnHost();
+            for (QueueType queueType : {QueueType::Graphics, QueueType::Compute, QueueType::Transfer})
+            {
+                ComPtr<ICommandQueue> queue;
+                if (SLANG_SUCCEEDED(device->getQueue(queueType, queue.writeRef())) && queue)
+                {
+                    queue->waitOnHost();
+                }
+            }
             device.setNull();
         }
         if (!ENABLE_DEVICE_CACHE)
