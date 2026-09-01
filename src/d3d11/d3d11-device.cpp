@@ -603,7 +603,7 @@ Result DeviceImpl::getQueue(QueueType type, ICommandQueue** outQueue)
 {
     if (type != QueueType::Graphics)
     {
-        return SLANG_E_INVALID_ARG;
+        return SLANG_E_NOT_AVAILABLE;
     }
     returnComPtr(outQueue, m_queue);
     return SLANG_OK;
