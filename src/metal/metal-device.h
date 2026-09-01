@@ -160,6 +160,8 @@ public:
     /// createBuffer, createTexture) use m_queue->m_queueFence to participate
     /// in the fence chain. See synchronization model in metal-command.h.
     RefPtr<CommandQueueImpl> m_queue;
+    RefPtr<CommandQueueImpl> m_computeQueue;
+    RefPtr<CommandQueueImpl> m_transferQueue;
     NS::SharedPtr<MTL::CommandQueue> m_commandQueue;
     ClearEngine m_clearEngine;
 

@@ -1183,10 +1183,10 @@ void CommandQueueImpl::retireCommandBuffers()
     getDevice<DeviceImpl>()->flushHeaps();
 }
 
-void CommandQueueImpl::deferDelete(Resource* resource)
+void CommandQueueImpl::deferDelete(DeferredResource* shared)
 {
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
-    m_deferredDeleteQueue.push({m_lastSubmittedID, resource});
+    m_deferredDeleteQueue.push({m_lastSubmittedID, shared});
 }
 
 void CommandQueueImpl::executeDeferredDeletes()
@@ -1195,7 +1195,7 @@ void CommandQueueImpl::executeDeferredDeletes()
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
     while (!m_deferredDeleteQueue.empty() && m_deferredDeleteQueue.front().submissionID <= lastFinishedID)
     {
-        delete m_deferredDeleteQueue.front().resource;
+        releaseDeferredResource(m_deferredDeleteQueue.front().shared);
         m_deferredDeleteQueue.pop();
     }
 }

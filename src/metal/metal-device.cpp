@@ -36,6 +36,16 @@ DeviceImpl::~DeviceImpl()
     m_uploadHeap.release();
     m_readbackHeap.release();
 
+    if (m_computeQueue)
+    {
+        m_computeQueue->shutdown();
+        m_computeQueue.setNull();
+    }
+    if (m_transferQueue)
+    {
+        m_transferQueue->shutdown();
+        m_transferQueue.setNull();
+    }
     if (m_queue)
     {
         m_queue->shutdown();
@@ -52,9 +62,23 @@ DeviceImpl::~DeviceImpl()
 
 void DeviceImpl::deferDelete(Resource* resource)
 {
-    SLANG_RHI_ASSERT(m_queue != nullptr);
-    m_queue->deferDelete(resource);
+    CommandQueueImpl* queues[] = {m_queue, m_computeQueue, m_transferQueue};
+    int count = 0;
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            ++count;
+    }
+    SLANG_RHI_ASSERT(count > 0);
+    DeferredResource* shared = new DeferredResource();
+    shared->resource = resource;
+    shared->remaining.store(count, std::memory_order_relaxed);
     resource->breakStrongReferenceToDevice();
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            queue->deferDelete(shared);
+    }
 }
 
 Result DeviceImpl::getNativeDeviceHandles(DeviceNativeHandles* outHandles)
@@ -150,6 +174,23 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
     m_queue = new CommandQueueImpl(this, QueueType::Graphics);
     m_queue->init(m_commandQueue);
     m_queue->setInternalReferenceCount(1);
+
+    auto createAdditionalQueue = [&](QueueType type, RefPtr<CommandQueueImpl>& outQueue) -> Result
+    {
+        NS::SharedPtr<MTL::CommandQueue> nativeQueue = NS::TransferPtr(m_device->newCommandQueue());
+        if (!nativeQueue)
+            return SLANG_FAIL;
+        if (m_residencySet)
+            nativeQueue->addResidencySet(m_residencySet.get());
+        outQueue = new CommandQueueImpl(this, type);
+        outQueue->init(nativeQueue);
+        outQueue->setInternalReferenceCount(1);
+        return SLANG_OK;
+    };
+    SLANG_RETURN_ON_FAIL(createAdditionalQueue(QueueType::Compute, m_computeQueue));
+    addFeature(Feature::ComputeQueue);
+    SLANG_RETURN_ON_FAIL(createAdditionalQueue(QueueType::Transfer, m_transferQueue));
+    addFeature(Feature::TransferQueue);
 
     // Setup capture manager.
     if (captureEnabled())
@@ -361,12 +402,24 @@ Result DeviceImpl::getQueue(QueueType type, ICommandQueue** outQueue)
 {
     AUTORELEASEPOOL
 
-    if (type != QueueType::Graphics)
+    switch (type)
     {
+    case QueueType::Graphics:
+        returnComPtr(outQueue, m_queue);
+        return SLANG_OK;
+    case QueueType::Compute:
+        if (!m_computeQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_computeQueue);
+        return SLANG_OK;
+    case QueueType::Transfer:
+        if (!m_transferQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_transferQueue);
+        return SLANG_OK;
+    default:
         return SLANG_E_INVALID_ARG;
     }
-    returnComPtr(outQueue, m_queue);
-    return SLANG_OK;
 }
 
 Result DeviceImpl::readBuffer(IBuffer* buffer, Offset offset, Size size, void* outData)
