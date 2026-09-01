@@ -58,6 +58,7 @@ public:
     ShaderTableImpl::PipelineData* m_shaderTablePipelineData = nullptr;
 
     BindingDataImpl* m_bindingData = nullptr;
+    QueueType m_queueType = QueueType::Graphics;
 
     uint64_t m_rayGenTableAddr = 0;
     VkStridedDeviceAddressRegionKHR m_raygenSBT;
@@ -134,9 +135,25 @@ public:
     );
 };
 
+static void clampTransferQueueBarrier(VkPipelineStageFlags& stages, VkAccessFlags& access)
+{
+    const VkPipelineStageFlags legalStages = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT | VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT |
+                                             VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT |
+                                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    if ((stages & ~legalStages) != 0)
+        stages = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+
+    const VkAccessFlags legalAccess = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT |
+                                      VK_ACCESS_HOST_READ_BIT | VK_ACCESS_HOST_WRITE_BIT | VK_ACCESS_MEMORY_READ_BIT |
+                                      VK_ACCESS_MEMORY_WRITE_BIT;
+    if ((access & ~legalAccess) != 0)
+        access = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+}
+
 Result CommandRecorder::record(CommandBufferImpl* commandBuffer)
 {
     m_cmdBuffer = commandBuffer->m_commandBuffer;
+    m_queueType = commandBuffer->m_queue->m_type;
 
 #if SLANG_RHI_ENABLE_AFTERMATH
     // Enable aftermath marker tracking if aftermath is enabled and extension is available.
@@ -1718,6 +1735,13 @@ void CommandRecorder::commitBarriers()
             calcPipelineStageFlags(m_api.m_supportedShaderStageFlags, bufferBarrier.stateBefore, true);
         VkPipelineStageFlags afterStageFlags =
             calcPipelineStageFlags(m_api.m_supportedShaderStageFlags, bufferBarrier.stateAfter, false);
+        VkAccessFlags srcAccessMask = calcAccessFlags(bufferBarrier.stateBefore);
+        VkAccessFlags dstAccessMask = calcAccessFlags(bufferBarrier.stateAfter);
+        if (m_queueType == QueueType::Transfer)
+        {
+            clampTransferQueueBarrier(beforeStageFlags, srcAccessMask);
+            clampTransferQueueBarrier(afterStageFlags, dstAccessMask);
+        }
 
         if ((beforeStageFlags != activeBeforeStageFlags || afterStageFlags != activeAfterStageFlags) &&
             !bufferBarriers.empty())
@@ -1731,8 +1755,8 @@ void CommandRecorder::commitBarriers()
 
         VkBufferMemoryBarrier barrier = {};
         barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-        barrier.srcAccessMask = calcAccessFlags(bufferBarrier.stateBefore);
-        barrier.dstAccessMask = calcAccessFlags(bufferBarrier.stateAfter);
+        barrier.srcAccessMask = srcAccessMask;
+        barrier.dstAccessMask = dstAccessMask;
         barrier.buffer = buffer->m_buffer.m_buffer;
         barrier.offset = 0;
         barrier.size = buffer->m_desc.size;
@@ -1755,6 +1779,13 @@ void CommandRecorder::commitBarriers()
             calcPipelineStageFlags(m_api.m_supportedShaderStageFlags, textureBarrier.stateBefore, true);
         VkPipelineStageFlags afterStageFlags =
             calcPipelineStageFlags(m_api.m_supportedShaderStageFlags, textureBarrier.stateAfter, false);
+        VkAccessFlags srcAccessMask = calcAccessFlags(textureBarrier.stateBefore);
+        VkAccessFlags dstAccessMask = calcAccessFlags(textureBarrier.stateAfter);
+        if (m_queueType == QueueType::Transfer)
+        {
+            clampTransferQueueBarrier(beforeStageFlags, srcAccessMask);
+            clampTransferQueueBarrier(afterStageFlags, dstAccessMask);
+        }
 
         if ((beforeStageFlags != activeBeforeStageFlags || afterStageFlags != activeAfterStageFlags) &&
             !imageBarriers.empty())
@@ -1785,8 +1816,8 @@ void CommandRecorder::commitBarriers()
         barrier.subresourceRange.baseMipLevel = textureBarrier.entireTexture ? 0 : textureBarrier.mip;
         barrier.subresourceRange.layerCount = textureBarrier.entireTexture ? VK_REMAINING_ARRAY_LAYERS : 1;
         barrier.subresourceRange.levelCount = textureBarrier.entireTexture ? VK_REMAINING_MIP_LEVELS : 1;
-        barrier.srcAccessMask = calcAccessFlags(textureBarrier.stateBefore);
-        barrier.dstAccessMask = calcAccessFlags(textureBarrier.stateAfter);
+        barrier.srcAccessMask = srcAccessMask;
+        barrier.dstAccessMask = dstAccessMask;
         imageBarriers.push_back(barrier);
     }
     if (!imageBarriers.empty())

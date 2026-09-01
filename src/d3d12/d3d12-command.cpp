@@ -64,6 +64,7 @@ public:
     UINT64 m_rayGenRecordStride = 0;
 
     BindingDataImpl* m_bindingData = nullptr;
+    D3D12_COMMAND_LIST_TYPE m_commandListType = D3D12_COMMAND_LIST_TYPE_DIRECT;
 
 #if SLANG_RHI_ENABLE_AFTERMATH
     GFSDK_Aftermath_ContextHandle m_aftermathContext = nullptr;
@@ -143,9 +144,17 @@ public:
     );
 };
 
+static D3D12_RESOURCE_STATES clampCopyQueueResourceState(D3D12_RESOURCE_STATES state)
+{
+    if (state == D3D12_RESOURCE_STATE_COPY_SOURCE || state == D3D12_RESOURCE_STATE_COPY_DEST)
+        return state;
+    return D3D12_RESOURCE_STATE_COMMON;
+}
+
 Result CommandRecorder::record(CommandBufferImpl* commandBuffer)
 {
     m_cmdList = commandBuffer->m_d3dCommandList;
+    m_commandListType = commandBuffer->m_queue->m_commandListType;
     m_cmdList->QueryInterface<ID3D12GraphicsCommandList1>(m_cmdList1.writeRef());
     m_cmdList->QueryInterface<ID3D12GraphicsCommandList4>(m_cmdList4.writeRef());
     m_cmdList->QueryInterface<ID3D12GraphicsCommandList6>(m_cmdList6.writeRef());
@@ -1571,6 +1580,9 @@ void CommandRecorder::cmdSetTextureState(const commands::SetTextureState& cmd)
 
 void CommandRecorder::cmdGlobalBarrier(const commands::GlobalBarrier& cmd)
 {
+    if (m_commandListType == D3D12_COMMAND_LIST_TYPE_COPY)
+        return;
+
     // Global barrier on D3D12 is implemented with a UAV barrier pointing at null resource.
     // https://learn.microsoft.com/en-us/windows/win32/direct3d12/using-resource-barriers-to-synchronize-resource-states-in-direct3d-12
     // TODO: Look at using D3D12 advanced barriers when available, currently only experimental in agility sdk though.
@@ -1743,6 +1755,11 @@ void CommandRecorder::commitBarriers()
         D3D12_RESOURCE_BARRIER barrier = {};
         D3D12_RESOURCE_STATES stateBefore = translateResourceState(bufferBarrier.stateBefore);
         D3D12_RESOURCE_STATES stateAfter = translateResourceState(bufferBarrier.stateAfter);
+        if (m_commandListType == D3D12_COMMAND_LIST_TYPE_COPY)
+        {
+            stateBefore = clampCopyQueueResourceState(stateBefore);
+            stateAfter = clampCopyQueueResourceState(stateAfter);
+        }
         // Acceleration structure buffers need to be treated specially.
         // D3D12 doesn't allow to transition to/from D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE state.
         // Instead, UAV barriers are used to synchronize accesses.
@@ -1757,11 +1774,12 @@ void CommandRecorder::commitBarriers()
             barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
             barriers.push_back(barrier);
         }
-        else if ((bufferBarrier.stateBefore == ResourceState::AccelerationStructureWrite &&
-                  bufferBarrier.stateAfter == ResourceState::AccelerationStructureRead) ||
-                 (bufferBarrier.stateAfter == ResourceState::AccelerationStructureRead &&
-                  bufferBarrier.stateBefore == ResourceState::AccelerationStructureWrite) ||
-                 ((stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0))
+        else if (m_commandListType != D3D12_COMMAND_LIST_TYPE_COPY &&
+                 ((bufferBarrier.stateBefore == ResourceState::AccelerationStructureWrite &&
+                   bufferBarrier.stateAfter == ResourceState::AccelerationStructureRead) ||
+                  (bufferBarrier.stateAfter == ResourceState::AccelerationStructureRead &&
+                   bufferBarrier.stateBefore == ResourceState::AccelerationStructureWrite) ||
+                  ((stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)))
         {
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
             barrier.UAV.pResource = buffer->m_resource;
@@ -1775,6 +1793,11 @@ void CommandRecorder::commitBarriers()
         D3D12_RESOURCE_BARRIER barrier = {};
         D3D12_RESOURCE_STATES stateBefore = translateResourceState(textureBarrier.stateBefore);
         D3D12_RESOURCE_STATES stateAfter = translateResourceState(textureBarrier.stateAfter);
+        if (m_commandListType == D3D12_COMMAND_LIST_TYPE_COPY)
+        {
+            stateBefore = clampCopyQueueResourceState(stateBefore);
+            stateAfter = clampCopyQueueResourceState(stateAfter);
+        }
         if (stateBefore != stateAfter)
         {
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -1800,7 +1823,8 @@ void CommandRecorder::commitBarriers()
                 }
             }
         }
-        else if ((stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)
+        else if (m_commandListType != D3D12_COMMAND_LIST_TYPE_COPY &&
+                 (stateAfter & D3D12_RESOURCE_STATE_UNORDERED_ACCESS) != 0)
         {
             barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
             barrier.UAV.pResource = texture->m_resource;

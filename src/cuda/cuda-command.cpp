@@ -886,16 +886,15 @@ CommandQueueImpl::~CommandQueueImpl() {}
 
 Result CommandQueueImpl::init()
 {
-    // On CUDA, treat the graphics stream as the default stream, identified
-    // by a NULL ptr. When we support async compute queues on D3D/Vulkan,
-    // they will be equivalent to secondary, non-default streams in CUDA.
+    // Graphics stays on the NULL stream for compatibility with existing CUDA
+    // clients. Other queue types use non-blocking streams so they can overlap.
     if (m_type == QueueType::Graphics)
     {
         m_stream = nullptr;
     }
     else
     {
-        SLANG_RETURN_ON_FAIL(cuStreamCreate(&m_stream, 0));
+        SLANG_RETURN_ON_FAIL(cuStreamCreate(&m_stream, CU_STREAM_NON_BLOCKING));
     }
 
     SLANG_RETURN_ON_FAIL(recordTimestampAnchor(this, 0));

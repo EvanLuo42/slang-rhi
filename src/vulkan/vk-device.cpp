@@ -1459,7 +1459,9 @@ Result DeviceImpl::initVulkanDevice(
             {
                 for (uint32_t i = 0; i < familyCount; ++i)
                 {
-                    if (queuesPerFamily[i] < familyProps[i].queueCount)
+                    const VkQueueFlags flags = familyProps[i].queueFlags;
+                    if (queuesPerFamily[i] < familyProps[i].queueCount &&
+                        (flags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT)))
                     {
                         transferFamily = int(i);
                         break;

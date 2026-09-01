@@ -206,9 +206,8 @@ GPU_TEST_CASE("queue-cross-queue-sync", ALL)
     compareComputeResult(device, buffer, makeArray<float>(11.0f, 12.0f, 13.0f, 14.0f));
 }
 
-// Copy a UAV-default buffer on the transfer queue. D3D12 COPY lists and dedicated Vulkan
-// transfer families cannot emit UAV/shader-stage barriers; if recording still restores
-// defaultState, debug/validation layers should fail this test.
+// Copy a UAV-default buffer on the transfer queue. Copy lists/families cannot emit
+// graphics/compute barriers, so recording must clamp to copy-legal states/stages.
 GPU_TEST_CASE("queue-transfer-copy-uav-default", D3D12 | Vulkan | Metal | CUDA | DontCacheDevice)
 {
     if (!device->hasFeature(Feature::TransferQueue))
@@ -367,7 +366,8 @@ static VulkanQueueSlots selectVulkanQueueSlots(const VkQueueFamilyProperties* fa
     {
         for (uint32_t i = 0; i < familyCount; ++i)
         {
-            if (queuesPerFamily[i] < familyProps[i].queueCount)
+            if (queuesPerFamily[i] < familyProps[i].queueCount &&
+                vulkanQueueFamilySupportsCopy(familyProps[i].queueFlags))
             {
                 transferFamily = int(i);
                 break;
@@ -420,10 +420,7 @@ TEST_CASE("queue-vulkan-transfer-family-selection")
         families[2].queueCount = 1;
 
         VulkanQueueSlots slots = selectVulkanQueueSlots(families, 3);
-        if (slots.transfer.index >= 0)
-        {
-            CHECK(vulkanQueueFamilySupportsCopy(families[uint32_t(slots.transfer.family)].queueFlags));
-        }
+        CHECK(slots.transfer.index < 0);
     }
 }
 #endif
