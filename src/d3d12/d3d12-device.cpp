@@ -831,6 +831,8 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
     addFeature(Feature::ParameterBlock);
     addFeature(Feature::Surface);
     addFeature(Feature::PipelineCache);
+    addFeature(Feature::ComputeQueue);
+    addFeature(Feature::TransferQueue);
     addFeature(Feature::Rasterization);
     addFeature(Feature::CustomBorderColor);
     addFeature(Feature::TimestampQuery);
@@ -1239,10 +1241,18 @@ Result DeviceImpl::initialize(const DeviceDesc& desc, BackendImpl* backend)
         std::array{slang::PreprocessorMacroDesc{"__D3D12__", "1"}}
     ));
 
-    // Create queue.
+    // Create queues.
     m_queue = new CommandQueueImpl(this, QueueType::Graphics);
-    SLANG_RETURN_ON_FAIL(m_queue->init(0));
+    SLANG_RETURN_ON_FAIL(m_queue->init());
     m_queue->setInternalReferenceCount(1);
+
+    m_computeQueue = new CommandQueueImpl(this, QueueType::Compute);
+    SLANG_RETURN_ON_FAIL(m_computeQueue->init());
+    m_computeQueue->setInternalReferenceCount(1);
+
+    m_transferQueue = new CommandQueueImpl(this, QueueType::Transfer);
+    SLANG_RETURN_ON_FAIL(m_transferQueue->init());
+    m_transferQueue->setInternalReferenceCount(1);
 
     // Retrieve timestamp frequency.
     m_queue->m_d3dQueue->GetTimestampFrequency(&m_info.timestampFrequency);
@@ -1270,12 +1280,24 @@ Result DeviceImpl::getNativeDeviceHandles(DeviceNativeHandles* outHandles)
 
 Result DeviceImpl::getQueue(QueueType type, ICommandQueue** outQueue)
 {
-    if (type != QueueType::Graphics)
+    switch (type)
     {
+    case QueueType::Graphics:
+        returnComPtr(outQueue, m_queue);
+        return SLANG_OK;
+    case QueueType::Compute:
+        if (!m_computeQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_computeQueue);
+        return SLANG_OK;
+    case QueueType::Transfer:
+        if (!m_transferQueue)
+            return SLANG_E_NOT_AVAILABLE;
+        returnComPtr(outQueue, m_transferQueue);
+        return SLANG_OK;
+    default:
         return SLANG_E_INVALID_ARG;
     }
-    returnComPtr(outQueue, m_queue);
-    return SLANG_OK;
 }
 
 Result DeviceImpl::createSurface(WindowHandle windowHandle, ISurface** outSurface)
@@ -2262,6 +2284,16 @@ DeviceImpl::~DeviceImpl()
     m_uploadHeap.release();
     m_readbackHeap.release();
 
+    if (m_computeQueue)
+    {
+        m_computeQueue->shutdown();
+        m_computeQueue.setNull();
+    }
+    if (m_transferQueue)
+    {
+        m_transferQueue->shutdown();
+        m_transferQueue.setNull();
+    }
     if (m_queue)
     {
         m_queue->shutdown();
@@ -2292,9 +2324,23 @@ DeviceImpl::~DeviceImpl()
 
 void DeviceImpl::deferDelete(Resource* resource)
 {
-    SLANG_RHI_ASSERT(m_queue != nullptr);
-    m_queue->deferDelete(resource);
+    CommandQueueImpl* queues[] = {m_queue, m_computeQueue, m_transferQueue};
+    int count = 0;
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            ++count;
+    }
+    SLANG_RHI_ASSERT(count > 0);
+    DeferredResource* shared = new DeferredResource();
+    shared->resource = resource;
+    shared->remaining.store(count, std::memory_order_relaxed);
     resource->breakStrongReferenceToDevice();
+    for (CommandQueueImpl* queue : queues)
+    {
+        if (queue)
+            queue->deferDelete(shared);
+    }
 }
 
 } // namespace rhi::d3d12

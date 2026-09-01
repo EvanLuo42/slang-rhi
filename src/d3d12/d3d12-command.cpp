@@ -1891,21 +1891,34 @@ CommandQueueImpl::CommandQueueImpl(Device* device, QueueType type)
 
 CommandQueueImpl::~CommandQueueImpl() {}
 
-Result CommandQueueImpl::init(uint32_t queueIndex)
+static D3D12_COMMAND_LIST_TYPE getCommandListType(QueueType type)
+{
+    switch (type)
+    {
+    case QueueType::Compute:
+        return D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    case QueueType::Transfer:
+        return D3D12_COMMAND_LIST_TYPE_COPY;
+    default:
+        return D3D12_COMMAND_LIST_TYPE_DIRECT;
+    }
+}
+
+Result CommandQueueImpl::init()
 {
     DeviceImpl* device = getDevice<DeviceImpl>();
-    m_queueIndex = queueIndex;
     m_d3dDevice = device->m_device;
+    m_commandListType = getCommandListType(m_type);
 
     D3D12_COMMAND_QUEUE_DESC queueDesc = {};
-    queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+    queueDesc.Type = m_commandListType;
     SLANG_D3D_RETURN_ON_FAIL_REPORT(
         m_d3dDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(m_d3dQueue.writeRef())),
         m_device
     );
 
 #if SLANG_RHI_ENABLE_AFTERMATH
-    if (device->m_aftermathCrashDumper)
+    if (device->m_aftermathCrashDumper && m_commandListType != D3D12_COMMAND_LIST_TYPE_COPY)
     {
         GFSDK_Aftermath_DX12_CreateContextHandle(m_d3dQueue, &m_aftermathContext);
     }
@@ -1918,16 +1931,19 @@ Result CommandQueueImpl::init(uint32_t queueIndex)
     m_globalWaitHandle =
         CreateEventEx(nullptr, nullptr, CREATE_EVENT_INITIAL_SET | CREATE_EVENT_MANUAL_RESET, EVENT_ALL_ACCESS);
 
-    TransientBufferHeapDesc constantBufferHeapDesc;
-    constantBufferHeapDesc.initialPageSize = 64 * 1024;
-    constantBufferHeapDesc.maxPageSize = 4 * 1024 * 1024;
-    constantBufferHeapDesc.maxRetainedSize = 4 * 1024 * 1024;
-    constantBufferHeapDesc.memoryType = MemoryType::Upload;
-    constantBufferHeapDesc.usage = BufferUsage::ConstantBuffer;
-    constantBufferHeapDesc.defaultState = ResourceState::ConstantBuffer;
-    constantBufferHeapDesc.alignment = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
-    constantBufferHeapDesc.allocationGranularity = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
-    m_constantBufferHeap.initialize(device, constantBufferHeapDesc);
+    if (m_commandListType != D3D12_COMMAND_LIST_TYPE_COPY)
+    {
+        TransientBufferHeapDesc constantBufferHeapDesc;
+        constantBufferHeapDesc.initialPageSize = 64 * 1024;
+        constantBufferHeapDesc.maxPageSize = 4 * 1024 * 1024;
+        constantBufferHeapDesc.maxRetainedSize = 4 * 1024 * 1024;
+        constantBufferHeapDesc.memoryType = MemoryType::Upload;
+        constantBufferHeapDesc.usage = BufferUsage::ConstantBuffer;
+        constantBufferHeapDesc.defaultState = ResourceState::ConstantBuffer;
+        constantBufferHeapDesc.alignment = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+        constantBufferHeapDesc.allocationGranularity = D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT;
+        m_constantBufferHeap.initialize(device, constantBufferHeapDesc);
+    }
     return SLANG_OK;
 }
 
@@ -2008,13 +2024,13 @@ void CommandQueueImpl::retireCommandBuffers()
     getDevice<DeviceImpl>()->flushHeaps();
 }
 
-void CommandQueueImpl::deferDelete(Resource* resource)
+void CommandQueueImpl::deferDelete(DeferredResource* shared)
 {
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
     // Use current submission ID - resource will be released after this submission completes.
     // This is conservative but simple: the resource may have been used in an earlier submission,
     // but using the current ID ensures we don't release too early.
-    m_deferredDeleteQueue.push({m_lastSubmittedID, resource});
+    m_deferredDeleteQueue.push({m_lastSubmittedID, shared});
 }
 
 void CommandQueueImpl::executeDeferredDeletes()
@@ -2023,8 +2039,7 @@ void CommandQueueImpl::executeDeferredDeletes()
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
     while (!m_deferredDeleteQueue.empty() && m_deferredDeleteQueue.front().submissionID <= lastFinishedID)
     {
-        // GPU is done with this resource - delete it.
-        delete m_deferredDeleteQueue.front().resource;
+        releaseDeferredResource(m_deferredDeleteQueue.front().shared);
         m_deferredDeleteQueue.pop();
     }
 }
@@ -2254,15 +2269,15 @@ CommandBufferImpl::~CommandBufferImpl()
 Result CommandBufferImpl::init()
 {
     DeviceImpl* device = getDevice<DeviceImpl>();
+    D3D12_COMMAND_LIST_TYPE commandListType = m_queue->m_commandListType;
     SLANG_D3D_RETURN_ON_FAIL_REPORT(
-        device->m_device
-            ->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(m_d3dCommandAllocator.writeRef())),
+        device->m_device->CreateCommandAllocator(commandListType, IID_PPV_ARGS(m_d3dCommandAllocator.writeRef())),
         device
     );
     SLANG_D3D_RETURN_ON_FAIL_REPORT(
         device->m_device->CreateCommandList(
             0,
-            D3D12_COMMAND_LIST_TYPE_DIRECT,
+            commandListType,
             m_d3dCommandAllocator,
             nullptr,
             IID_PPV_ARGS(m_d3dCommandList.writeRef())
@@ -2271,22 +2286,25 @@ Result CommandBufferImpl::init()
     );
 
 #if SLANG_RHI_ENABLE_AFTERMATH
-    if (device->m_aftermathCrashDumper)
+    if (device->m_aftermathCrashDumper && commandListType != D3D12_COMMAND_LIST_TYPE_COPY)
     {
         GFSDK_Aftermath_DX12_CreateContextHandle(m_d3dCommandList, &m_aftermathContext);
     }
 #endif
 
-    ID3D12DescriptorHeap* heaps[] = {
-        device->m_gpuCbvSrvUavHeap->getHeap(),
-        device->m_gpuSamplerHeap->getHeap(),
-    };
-    m_d3dCommandList->SetDescriptorHeaps(SLANG_COUNT_OF(heaps), heaps);
+    if (commandListType != D3D12_COMMAND_LIST_TYPE_COPY)
+    {
+        ID3D12DescriptorHeap* heaps[] = {
+            device->m_gpuCbvSrvUavHeap->getHeap(),
+            device->m_gpuSamplerHeap->getHeap(),
+        };
+        m_d3dCommandList->SetDescriptorHeaps(SLANG_COUNT_OF(heaps), heaps);
 
-    m_constantBufferArena.initialize(&m_queue->m_constantBufferHeap);
+        m_constantBufferArena.initialize(&m_queue->m_constantBufferHeap);
 
-    SLANG_RETURN_ON_FAIL(m_cbvSrvUavArena.init(device->m_gpuCbvSrvUavHeap, 128));
-    SLANG_RETURN_ON_FAIL(m_samplerArena.init(device->m_gpuSamplerHeap, 4));
+        SLANG_RETURN_ON_FAIL(m_cbvSrvUavArena.init(device->m_gpuCbvSrvUavHeap, 128));
+        SLANG_RETURN_ON_FAIL(m_samplerArena.init(device->m_gpuSamplerHeap, 4));
+    }
 
     return SLANG_OK;
 }
@@ -2296,15 +2314,18 @@ Result CommandBufferImpl::reset()
     DeviceImpl* device = getDevice<DeviceImpl>();
     SLANG_D3D_RETURN_ON_FAIL_REPORT(m_d3dCommandAllocator->Reset(), device);
     SLANG_D3D_RETURN_ON_FAIL_REPORT(m_d3dCommandList->Reset(m_d3dCommandAllocator, nullptr), device);
-    ID3D12DescriptorHeap* heaps[] = {
-        device->m_gpuCbvSrvUavHeap->getHeap(),
-        device->m_gpuSamplerHeap->getHeap(),
-    };
-    m_d3dCommandList->SetDescriptorHeaps(SLANG_COUNT_OF(heaps), heaps);
+    if (m_queue->m_commandListType != D3D12_COMMAND_LIST_TYPE_COPY)
+    {
+        ID3D12DescriptorHeap* heaps[] = {
+            device->m_gpuCbvSrvUavHeap->getHeap(),
+            device->m_gpuSamplerHeap->getHeap(),
+        };
+        m_d3dCommandList->SetDescriptorHeaps(SLANG_COUNT_OF(heaps), heaps);
 
-    m_cbvSrvUavArena.reset();
-    m_samplerArena.reset();
-    m_constantBufferArena.reset();
+        m_cbvSrvUavArena.reset();
+        m_samplerArena.reset();
+        m_constantBufferArena.reset();
+    }
     m_bindingCache.reset();
     return CommandBuffer::reset();
 }
