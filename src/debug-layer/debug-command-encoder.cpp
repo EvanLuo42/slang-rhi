@@ -665,6 +665,12 @@ IRenderPassEncoder* DebugCommandEncoder::beginRenderPass(const RenderPassDesc& d
     requireOpen();
     requireNoPass();
 
+    if (!queueTypeSupportsRender(m_queueType))
+    {
+        RHI_VALIDATION_ERROR("beginRenderPass is only supported on the graphics queue.");
+        return nullptr;
+    }
+
     bool hasErrors = false;
 
     // Validate color attachment count.
@@ -824,6 +830,12 @@ IComputePassEncoder* DebugCommandEncoder::beginComputePass()
     requireOpen();
     requireNoPass();
 
+    if (!queueTypeSupportsCompute(m_queueType))
+    {
+        RHI_VALIDATION_ERROR("beginComputePass is not supported on the transfer queue.");
+        return nullptr;
+    }
+
     auto innerEncoder = baseObject->beginComputePass();
     if (!innerEncoder)
         return nullptr;
@@ -841,6 +853,12 @@ IRayTracingPassEncoder* DebugCommandEncoder::beginRayTracingPass()
 
     requireOpen();
     requireNoPass();
+
+    if (!queueTypeSupportsCompute(m_queueType))
+    {
+        RHI_VALIDATION_ERROR("beginRayTracingPass is not supported on the transfer queue.");
+        return nullptr;
+    }
 
     auto innerEncoder = baseObject->beginRayTracingPass();
     if (!innerEncoder)

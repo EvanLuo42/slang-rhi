@@ -323,6 +323,7 @@ public:
 
     EncoderState m_state = EncoderState::Open;
     PassState m_passState = PassState::NoPass;
+    QueueType m_queueType = QueueType::Graphics;
 
     DebugRenderPassEncoder m_renderPassEncoder;
     DebugComputePassEncoder m_computePassEncoder;

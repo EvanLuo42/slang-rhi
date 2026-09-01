@@ -867,9 +867,18 @@ Result DebugDevice::getQueue(QueueType type, ICommandQueue** outQueue)
         RHI_VALIDATION_ERROR("'outQueue' must not be null.");
         return SLANG_E_INVALID_ARG;
     }
+    if (type != QueueType::Graphics && type != QueueType::Compute && type != QueueType::Transfer)
+    {
+        RHI_VALIDATION_ERROR("'type' is not a valid QueueType.");
+        return SLANG_E_INVALID_ARG;
+    }
 
     RefPtr<DebugCommandQueue> outObject = new DebugCommandQueue(ctx);
-    SLANG_RETURN_ON_FAIL(baseObject->getQueue(type, outObject->baseObject.writeRef()));
+    Result result = baseObject->getQueue(type, outObject->baseObject.writeRef());
+    if (SLANG_FAILED(result))
+    {
+        return result;
+    }
 
     returnComPtr(outQueue, outObject);
     return SLANG_OK;
