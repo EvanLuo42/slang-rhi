@@ -18,6 +18,7 @@
 #include "shader.h"
 #include "pipeline.h"
 
+#include <atomic>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -66,6 +67,23 @@ public:
 
     virtual ~Resource() { --testing::gResourceCount; }
 };
+
+/// Token used when a resource may still be referenced by more than one queue.
+/// Each participating queue decrements `remaining`; the last one deletes the resource.
+struct DeferredResource
+{
+    Resource* resource = nullptr;
+    std::atomic<int> remaining{0};
+};
+
+inline void releaseDeferredResource(DeferredResource* shared)
+{
+    if (shared && shared->remaining.fetch_sub(1, std::memory_order_acq_rel) == 1)
+    {
+        delete shared->resource;
+        delete shared;
+    }
+}
 
 class Buffer : public IBuffer, public Resource
 {
