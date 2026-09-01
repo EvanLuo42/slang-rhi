@@ -357,6 +357,7 @@ Result DeviceImpl::createTexture(const TextureDesc& desc_, const SubresourceData
     imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageInfo.usage = _calcImageUsageFlags(desc.usage, desc.memoryType, initData);
     imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    applyQueueSharing(imageInfo.sharingMode, imageInfo.queueFamilyIndexCount, imageInfo.pQueueFamilyIndices);
 
     imageInfo.samples = (VkSampleCountFlagBits)desc.sampleCount;
 

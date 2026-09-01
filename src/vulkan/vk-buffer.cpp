@@ -19,13 +19,21 @@ Result createVkBuffer(
     Size bufferSize,
     VkBufferUsageFlags usage,
     VkExternalMemoryHandleTypeFlagsKHR externalMemoryHandleTypeFlags,
-    VkBuffer* outBuffer
+    VkBuffer* outBuffer,
+    uint32_t queueFamilyIndexCount = 0,
+    const uint32_t* queueFamilyIndices = nullptr
 )
 {
     VkBufferCreateInfo bufferCreateInfo = {VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO};
     bufferCreateInfo.size = bufferSize;
     bufferCreateInfo.usage = usage;
     bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (queueFamilyIndexCount > 1 && queueFamilyIndices)
+    {
+        bufferCreateInfo.sharingMode = VK_SHARING_MODE_CONCURRENT;
+        bufferCreateInfo.queueFamilyIndexCount = queueFamilyIndexCount;
+        bufferCreateInfo.pQueueFamilyIndices = queueFamilyIndices;
+    }
 
     VkExternalMemoryBufferCreateInfo externalMemoryBufferCreateInfo = {
         VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO
@@ -124,7 +132,9 @@ Result VKBufferHandleRAII::init(
     Size bufferSize,
     VkBufferUsageFlags usage,
     VkMemoryPropertyFlags reqMemoryProperties,
-    VkExternalMemoryHandleTypeFlagsKHR externalMemoryHandleTypeFlags
+    VkExternalMemoryHandleTypeFlagsKHR externalMemoryHandleTypeFlags,
+    uint32_t queueFamilyIndexCount,
+    const uint32_t* queueFamilyIndices
 )
 {
     SLANG_RHI_ASSERT(!isInitialized());
@@ -134,7 +144,15 @@ Result VKBufferHandleRAII::init(
     m_buffer = VK_NULL_HANDLE;
 
     // Create buffer
-    SLANG_RETURN_ON_FAIL(createVkBuffer(api, bufferSize, usage, externalMemoryHandleTypeFlags, &m_buffer));
+    SLANG_RETURN_ON_FAIL(createVkBuffer(
+        api,
+        bufferSize,
+        usage,
+        externalMemoryHandleTypeFlags,
+        &m_buffer,
+        queueFamilyIndexCount,
+        queueFamilyIndices
+    ));
 
     // Allocate memory
     SLANG_RETURN_ON_FAIL(
@@ -429,13 +447,27 @@ Result DeviceImpl::createBuffer(const BufferDesc& desc_, const void* initData, I
 #else
             = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
 #endif
-        SLANG_RETURN_ON_FAIL(
-            buffer->m_buffer.init(m_api, desc.size, usage, reqMemoryProperties, externalMemoryHandleTypeFlags)
-        );
+        SLANG_RETURN_ON_FAIL(buffer->m_buffer.init(
+            m_api,
+            desc.size,
+            usage,
+            reqMemoryProperties,
+            externalMemoryHandleTypeFlags,
+            m_uniqueQueueFamilyCount,
+            m_uniqueQueueFamilyIndices
+        ));
     }
     else
     {
-        SLANG_RETURN_ON_FAIL(buffer->m_buffer.init(m_api, desc.size, usage, reqMemoryProperties));
+        SLANG_RETURN_ON_FAIL(buffer->m_buffer.init(
+            m_api,
+            desc.size,
+            usage,
+            reqMemoryProperties,
+            0,
+            m_uniqueQueueFamilyCount,
+            m_uniqueQueueFamilyIndices
+        ));
     }
 
     _labelObject((uint64_t)buffer->m_buffer.m_buffer, VK_OBJECT_TYPE_BUFFER, desc.label);

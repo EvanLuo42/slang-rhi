@@ -1866,16 +1866,19 @@ void CommandQueueImpl::init(VkQueue queue, uint32_t queueFamilyIndex)
 
     DeviceImpl* device = getDevice<DeviceImpl>();
     const Size constantBufferAlignment = m_api.m_deviceProperties.limits.minUniformBufferOffsetAlignment;
-    TransientBufferHeapDesc constantBufferHeapDesc;
-    constantBufferHeapDesc.initialPageSize = 64 * 1024;
-    constantBufferHeapDesc.maxPageSize = 4 * 1024 * 1024;
-    constantBufferHeapDesc.maxRetainedSize = 4 * 1024 * 1024;
-    constantBufferHeapDesc.memoryType = MemoryType::Upload;
-    constantBufferHeapDesc.usage = BufferUsage::ConstantBuffer;
-    constantBufferHeapDesc.defaultState = ResourceState::ConstantBuffer;
-    constantBufferHeapDesc.alignment = constantBufferAlignment;
-    constantBufferHeapDesc.allocationGranularity = constantBufferAlignment;
-    m_constantBufferHeap.initialize(device, constantBufferHeapDesc);
+    if (m_type != QueueType::Transfer)
+    {
+        TransientBufferHeapDesc constantBufferHeapDesc;
+        constantBufferHeapDesc.initialPageSize = 64 * 1024;
+        constantBufferHeapDesc.maxPageSize = 4 * 1024 * 1024;
+        constantBufferHeapDesc.maxRetainedSize = 4 * 1024 * 1024;
+        constantBufferHeapDesc.memoryType = MemoryType::Upload;
+        constantBufferHeapDesc.usage = BufferUsage::ConstantBuffer;
+        constantBufferHeapDesc.defaultState = ResourceState::ConstantBuffer;
+        constantBufferHeapDesc.alignment = constantBufferAlignment;
+        constantBufferHeapDesc.allocationGranularity = constantBufferAlignment;
+        m_constantBufferHeap.initialize(device, constantBufferHeapDesc);
+    }
 
     {
         VkSemaphoreTypeCreateInfo timelineCreateInfo = {VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO};
@@ -1956,9 +1959,12 @@ void CommandQueueImpl::retireCommandBuffers()
         }
     }
 
-    // The internal device queue shares this VkQueue. Polling it here releases
-    // initialization staging allocations even if no further internal work occurs.
-    getDevice<DeviceImpl>()->m_deviceQueue.retireCompletedResources();
+    // The internal device queue shares the graphics VkQueue. Polling it here
+    // releases initialization staging allocations even if no further internal work occurs.
+    if (m_type == QueueType::Graphics)
+    {
+        getDevice<DeviceImpl>()->m_deviceQueue.retireCompletedResources();
+    }
 
     // Delete deferred resources that are no longer in use by the GPU.
     executeDeferredDeletes();
@@ -1967,13 +1973,13 @@ void CommandQueueImpl::retireCommandBuffers()
     getDevice<DeviceImpl>()->flushHeaps();
 }
 
-void CommandQueueImpl::deferDelete(Resource* resource)
+void CommandQueueImpl::deferDelete(DeferredResource* shared)
 {
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
     // Use current submission ID - resource will be released after this submission completes.
     // This is conservative but simple: the resource may have been used in an earlier submission,
     // but using the current ID ensures we don't release too early.
-    m_deferredDeleteQueue.push({m_lastSubmittedID, resource});
+    m_deferredDeleteQueue.push({m_lastSubmittedID, shared});
 }
 
 void CommandQueueImpl::executeDeferredDeletes()
@@ -1982,8 +1988,7 @@ void CommandQueueImpl::executeDeferredDeletes()
     std::lock_guard<std::mutex> lock(m_deferredDeleteQueueMutex);
     while (!m_deferredDeleteQueue.empty() && m_deferredDeleteQueue.front().submissionID <= lastFinishedID)
     {
-        // GPU is done with this resource - delete it.
-        delete m_deferredDeleteQueue.front().resource;
+        releaseDeferredResource(m_deferredDeleteQueue.front().shared);
         m_deferredDeleteQueue.pop();
     }
 }
@@ -2259,7 +2264,10 @@ CommandBufferImpl::~CommandBufferImpl()
 Result CommandBufferImpl::init()
 {
     DeviceImpl* device = getDevice<DeviceImpl>();
-    m_constantBufferArena.initialize(&m_queue->m_constantBufferHeap);
+    if (m_queue->m_type != QueueType::Transfer)
+    {
+        m_constantBufferArena.initialize(&m_queue->m_constantBufferHeap);
+    }
     m_descriptorSetAllocator.init(&device->m_api);
 
     VkCommandPoolCreateInfo createInfo = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};

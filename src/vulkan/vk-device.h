@@ -264,6 +264,17 @@ public:
 
     VulkanDeviceQueue m_deviceQueue;
     uint32_t m_queueFamilyIndex;
+    struct QueueSlot
+    {
+        uint32_t family = 0;
+        uint32_t index = 0;
+        bool valid = false;
+    };
+    QueueSlot m_graphicsSlot;
+    QueueSlot m_computeSlot;
+    QueueSlot m_transferSlot;
+    uint32_t m_uniqueQueueFamilyIndices[3] = {};
+    uint32_t m_uniqueQueueFamilyCount = 0;
 
     struct CooperativeMatrixFlexibleProperty
     {
@@ -281,6 +292,10 @@ public:
     std::vector<CooperativeMatrixDesc> m_cooperativeMatrixFixedProperties;
     std::vector<CooperativeMatrixFlexibleProperty> m_cooperativeMatrixFlexibleProperties;
     RefPtr<CommandQueueImpl> m_queue;
+    RefPtr<CommandQueueImpl> m_computeQueue;
+    RefPtr<CommandQueueImpl> m_transferQueue;
+
+    void applyQueueSharing(VkSharingMode& sharingMode, uint32_t& familyCount, const uint32_t*& families) const;
 
     DescriptorSetAllocator descriptorSetAllocator;
     RefPtr<BindlessDescriptorSet> m_bindlessDescriptorSet;

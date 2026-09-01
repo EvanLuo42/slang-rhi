@@ -36,7 +36,7 @@ public:
     struct DeferredDelete
     {
         uint64_t submissionID;
-        Resource* resource;
+        DeferredResource* shared;
     };
     std::mutex m_deferredDeleteQueueMutex;
     RingQueue<DeferredDelete> m_deferredDeleteQueue;
@@ -55,7 +55,7 @@ public:
 
     /// Queue a resource for deferred deletion. The resource will be deleted
     /// once the GPU has finished all work submitted up to this point.
-    void deferDelete(Resource* resource);
+    void deferDelete(DeferredResource* shared);
 
     /// Delete deferred resources that are no longer in use by the GPU.
     void executeDeferredDeletes();
