@@ -188,3 +188,8 @@
 #define S_DebugMessageSource_Layer "Layer"
 #define S_DebugMessageSource_Driver "Driver"
 #define S_DebugMessageSource_Slang "Slang"
+
+// QueueType
+#define S_QueueType_Graphics "Graphics"
+#define S_QueueType_Compute "Compute"
+#define S_QueueType_Transfer "Transfer"

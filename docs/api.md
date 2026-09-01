@@ -251,6 +251,16 @@
 | `waitOnHost`              | yes | yes  | yes   | yes   | yes    | yes   | yes  |
 | `getTimestampCalibration` | yes | yes  | yes   | yes   | yes    | :x:   | :x:  |
 
+`IDevice::getQueue` availability by `QueueType`:
+
+| QueueType | CPU | CUDA | D3D11 | D3D12 | Vulkan | Metal | WGPU |
+|-----------|-----|------|-------|-------|--------|-------|------|
+| Graphics  | yes | yes  | yes   | yes   | yes    | yes   | yes  |
+| Compute   | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+| Transfer  | :x: | yes  | :x:   | yes   | yes    | yes   | :x:  |
+
+Vulkan Compute/Transfer require a distinct queue (dedicated family or extra queue in the graphics family). Devices with a single queue only expose Graphics.
+
 ## `ISurface` interface
 
 | API                 | CPU | CUDA | D3D11 | D3D12 | Vulkan | Metal | WGPU |

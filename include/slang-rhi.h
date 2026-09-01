@@ -172,7 +172,10 @@ enum class DeviceType
     x(ArgumentBufferTier2,                      "argument-buffer-tier-2"                        ) \
     x(ResidencySet,                             "residency-set"                                 ) \
     /* CUDA specific features */                                                                  \
-    x(AtomicBfloat16,                           "atomic-bfloat16"                               )
+    x(AtomicBfloat16,                           "atomic-bfloat16"                               ) \
+    /* Queue features */                                                                          \
+    x(ComputeQueue,                             "compute-queue"                                 ) \
+    x(TransferQueue,                            "transfer-queue"                                )
 // clang-format on
 
 #define SLANG_RHI_FEATURE_X(e, _) e,
@@ -2821,8 +2824,30 @@ public:
 
 enum class QueueType
 {
+    /// Graphics queue. Supports render, compute, ray tracing, copies, and present.
     Graphics,
+    /// Async compute queue. Supports compute, ray tracing, copies, and resource state changes.
+    /// Not available on every device; check Feature::ComputeQueue or getQueue().
+    Compute,
+    /// Transfer/copy queue. Supports copies and resource state changes used for copies.
+    /// Not available on every device; check Feature::TransferQueue or getQueue().
+    Transfer,
 };
+
+inline bool queueTypeSupportsRender(QueueType type)
+{
+    return type == QueueType::Graphics;
+}
+
+inline bool queueTypeSupportsCompute(QueueType type)
+{
+    return type == QueueType::Graphics || type == QueueType::Compute;
+}
+
+inline bool queueTypeSupportsCopy(QueueType)
+{
+    return true;
+}
 
 enum class CpuTimestampDomain
 {
@@ -3570,6 +3595,9 @@ public:
         return layout;
     }
 
+    /// Get a command queue of the requested type.
+    /// Graphics is always available. Compute and Transfer return SLANG_E_NOT_AVAILABLE
+    /// when the device does not expose that queue (see Feature::ComputeQueue / Feature::TransferQueue).
     virtual SLANG_NO_THROW Result SLANG_MCALL getQueue(QueueType type, ICommandQueue** outQueue) = 0;
     inline ComPtr<ICommandQueue> getQueue(QueueType type)
     {

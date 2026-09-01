@@ -29,5 +29,6 @@ const char* enumToString(CooperativeVectorMatrixLayout value);
 const char* enumToString(CooperativeVectorComponentType value);
 const char* enumToString(DebugMessageType value);
 const char* enumToString(DebugMessageSource value);
+const char* enumToString(QueueType value);
 
 } // namespace rhi

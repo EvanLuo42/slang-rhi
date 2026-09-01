@@ -487,4 +487,18 @@ const char* enumToString(DebugMessageSource debugMessageSource)
     return S_INVALID;
 }
 
+const char* enumToString(QueueType value)
+{
+    switch (value)
+    {
+    case QueueType::Graphics:
+        return S_QueueType_Graphics;
+    case QueueType::Compute:
+        return S_QueueType_Compute;
+    case QueueType::Transfer:
+        return S_QueueType_Transfer;
+    }
+    return S_INVALID;
+}
+
 } // namespace rhi
